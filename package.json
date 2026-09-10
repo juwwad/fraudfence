@@ -1,11 +1,9 @@
 {
-  "name": "fraud-fence",
+  "name": "fraud-fence-vercel",
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vercel dev",
-    "build": "node --check api/analyze.js && node --check api/stream.js && node --check lib/config.js && node --check lib/transcribe.js && node --check lib/judge.js && node --check lib/risk.js && echo 'build check passed — no static build step needed'",
-    "start": "vercel dev"
+    "build": "node --check api/analyze.js && node --check api/stream.js && node --check lib/config.js && node --check lib/transcribe.js && node --check lib/judge.js && node --check lib/risk.js && echo 'build check passed — no static build step needed'"
   },
   "dependencies": {
     "openai": "^4.68.0",
