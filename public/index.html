@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Fraud Fence</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #fff;
+           display: grid; place-items: center; min-height: 100vh; margin: 0; }
+    #card { width: min(90vw, 640px); padding: 2rem; border-radius: 1.5rem;
+            background: #1e293b; text-align: center; transition: background .4s; }
+    #card.green { background: #14532d } #card.amber { background: #78350f } #card.red { background: #7f1d1d }
+    #score { font-size: 8rem; font-weight: 800; line-height: 1 }
+    #reason { font-size: 1.6rem; opacity: .9; min-height: 2.4rem }
+    #warning { display: none; margin-top: 1.5rem; padding: 1.25rem;
+               background: #dc2626; border-radius: 1rem; font-size: 1.8rem; font-weight: 700 }
+    #controls { margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center; align-items: center }
+    button { font-size: 1.1rem; padding: .75rem 1.25rem; border: 0; border-radius: .75rem; cursor: pointer }
+  </style>
+</head>
+<body>
+  <div id="card">
+    <div id="score">0</div>
+    <div id="reason">Upload a recording, or start listening</div>
+    <div id="warning">⚠️ Yeh OTP ka mutalba fraud hai. Call band kar dein.</div>
+    <div id="controls">
+      <button id="listen">🎙️ Start listening</button>
+      <input id="file" type="file" accept="audio/*" />
+    </div>
+  </div>
+
+  <script>
+    const card = document.getElementById("card")
+    const scoreEl = document.getElementById("score")
+    const reasonEl = document.getElementById("reason")
+    const warningEl = document.getElementById("warning")
+    const listenBtn = document.getElementById("listen")
+    const URDU_WARNING = "Yeh OTP ka mutalba fraud hai. Bank kabhi OTP nahi maangta. Call band kar dein."
+
+    function render(step) {
+      scoreEl.textContent = step.score
+      reasonEl.textContent = step.reason || "nothing suspicious yet"
+      card.className = step.level
+      if (step.warn && warningEl.style.display === "none") {
+        warningEl.style.display = "block"
+        speak(URDU_WARNING)
+      }
+    }
+
+    function speak(text) {
+      if (!("speechSynthesis" in window)) return
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = "ur-PK"
+      speechSynthesis.speak(utterance)
+    }
+
+    function reset() {
+      warningEl.style.display = "none"
+      scoreEl.textContent = "0"
+      card.className = ""
+    }
+
+    // MODE A — recorded file (server computes the whole timeline in one call)
+    document.getElementById("file").addEventListener("change", async (event) => {
+      const file = event.target.files[0]
+      if (!file) return
+
+      reset()
+      reasonEl.textContent = "Analysing..."
+
+      const body = new FormData()
+      body.append("audio", file)
+      const res = await fetch("/api/analyze", { method: "POST", body })
+      const data = await res.json()
+      if (data.error) { reasonEl.textContent = data.error; return }
+
+      for (const step of data.timeline) {
+        render(step)
+        await new Promise((r) => setTimeout(r, 900))
+      }
+    })
+
+    // MODE B — live microphone. The browser now carries riskState between chunks
+    // instead of a server-held sessionId, since serverless functions hold no memory.
+    const CHUNK_MS = 10000
+    let listening = false
+    let micStream = null
+    let riskState = null
+
+    listenBtn.addEventListener("click", async () => {
+      if (listening) return stopListening()
+
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+      })
+
+      reset()
+      riskState = null
+      listening = true
+      listenBtn.textContent = "⏹ Stop listening"
+      reasonEl.textContent = "Listening..."
+
+      while (listening) {
+        const blob = await recordChunk(micStream, CHUNK_MS)
+        sendChunk(blob)
+      }
+    })
+
+    function stopListening() {
+      listening = false
+      micStream?.getTracks().forEach((track) => track.stop())
+      listenBtn.textContent = "🎙️ Start listening"
+    }
+
+    function recordChunk(stream, ms) {
+      return new Promise((resolve) => {
+        const parts = []
+        const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" })
+        recorder.ondataavailable = (event) => parts.push(event.data)
+        recorder.onstop = () => resolve(new Blob(parts, { type: "audio/webm" }))
+        recorder.start()
+        setTimeout(() => recorder.stop(), ms)
+      })
+    }
+
+    async function sendChunk(blob) {
+      const body = new FormData()
+      body.append("audio", blob, "chunk.webm")
+      if (riskState) body.append("state", JSON.stringify(riskState))
+
+      const res = await fetch("/api/stream", { method: "POST", body })
+      const step = await res.json()
+      if (step.error) return
+      riskState = step.state
+      if (step.skipped) return
+      render(step)
+    }
+  </script>
+</body>
+</html>
