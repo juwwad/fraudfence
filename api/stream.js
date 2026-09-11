@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const transcript = await transcribe(audioFile.filepath)
+    const transcript = await transcribe(audioFile.filepath, audioFile.originalFilename ?? "chunk.webm")
     if (!transcript.trim()) return res.status(200).json({ skipped: true, state })
 
     const verdict = await judgeChunk(transcript)

@@ -16,7 +16,7 @@ export default async function handler(req, res) {
   if (!audioFile) return res.status(400).json({ error: "Upload an audio file." })
 
   try {
-    const transcript = await transcribe(audioFile.filepath)
+    const transcript = await transcribe(audioFile.filepath, audioFile.originalFilename ?? "audio.webm")
     let state = initialRiskState()
     const timeline = []
 
