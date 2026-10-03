@@ -12,7 +12,7 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
 
 ## Requirements
 
-- Node.js and npm
+- Node.js 18+ and npm
 - A Vercel account for deployment
 - A Groq API key for transcription
 - An OpenRouter API key for scam classification
@@ -26,7 +26,8 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
    npm install
    ```
 
-2. Create a `.env` file in the project root:
+2. Create a `.env` file in the project root. You can copy the provided
+   [`.env.example`](./.env.example) file:
 
    ```env
    GROQ_API_KEY=your_groq_api_key
@@ -39,6 +40,10 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
    TRANSCRIBE_MODEL=whisper-large-v3-turbo
    JUDGE_MODEL=qwen/qwen3-30b-a3b
    ```
+
+   `TRANSCRIBE_MODEL` and `JUDGE_MODEL` are optional. If omitted, the
+   application uses the defaults shown above. Keep API keys server-side; do
+   not add them to `public/index.html` or expose them in browser code.
 
 3. Start the local Vercel development server:
 
@@ -57,12 +62,16 @@ The browser must be served from a secure context for microphone access. `localho
 Choose an audio file in the file picker. The app sends it to `/api/analyze`, transcribes it, splits the transcript into 40-word chunks, and renders the risk timeline.
 
 Recorded uploads are limited to 20 MB by the API function.
+If transcription or scam classification fails for a chunk, the result is
+shown as `unknown` rather than being treated as safe.
 
 ### Live microphone
 
 Select **Start listening** and grant microphone access. The browser records 10-second WebM chunks and sends them to `/api/stream`. Risk state is returned by the server and kept in the browser so the stateless API can track consecutive high-risk chunks.
 
 Live chunks are limited to 5 MB by the API function. Select **Stop listening** to end recording.
+If a live chunk has no transcript, the API returns `skipped: true` and leaves
+the running risk state unchanged.
 
 ## API endpoints
 
@@ -102,6 +111,8 @@ The response includes the current transcript, risk output, and updated state. Em
 - Lower-risk chunks reduce the running score by 10 points.
 - The displayed level is green below 30, amber from 30 through 59, and red at 60 or above.
 - The warning is triggered after two consecutive high-risk chunks.
+- A failed analysis produces an `unknown` level, preserves the score and strike
+  count, and never lowers the risk.
 
 ## Deployment
 
@@ -149,6 +160,12 @@ Run the static syntax check with:
 
 ```bash
 npm run build
+```
+
+Run the unit tests for the risk-scoring logic with:
+
+```bash
+npm test
 ```
 
 No separate frontend build step is required; Vercel serves `public/index.html` directly.
