@@ -22,13 +22,29 @@ export default async function handler(req, res) {
     state = initialRiskState()
   }
 
+  // Language detected on an earlier chunk of this same live session, if
+  // any. The client echoes this back on each request (see index.html) so
+  // later chunks can reuse it instead of auto-detecting from scratch.
+  const languageHint = fields.language?.[0] || null
+
   try {
-    const transcript = await transcribe(audioFile.filepath, audioFile.originalFilename ?? "chunk.webm")
-    if (!transcript.trim()) return res.status(200).json({ skipped: true, state })
+    const { text: transcript, language } = await transcribe(
+      audioFile.filepath,
+      audioFile.originalFilename ?? "chunk.webm",
+      languageHint
+    )
+    if (!transcript.trim()) {
+      return res.status(200).json({ skipped: true, state, language: languageHint })
+    }
 
     const verdict = await judgeChunk(transcript)
     const result = scoreChunk(state, verdict)
-    res.status(200).json({ transcript, ...result.output, state: result.state })
+    res.status(200).json({
+      transcript,
+      ...result.output,
+      state: result.state,
+      language: language ?? languageHint,
+    })
   } catch (error) {
     console.error("stream failed:", error.message)
     res.status(500).json({ error: "Chunk failed." })
