@@ -6,9 +6,21 @@ import fs from "node:fs/promises"
 import { transcribe } from "../lib/transcribe.js"
 import { judgeChunk } from "../lib/judge.js"
 import { scoreChunk, initialRiskState } from "../lib/risk.js"
+import { checkRateLimit, getClientKey } from "../lib/rateLimit.js"
+import { config as appConfig } from "../lib/config.js"
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" })
+
+  const clientKey = getClientKey(req)
+  const rate = checkRateLimit(`stream:${clientKey}`, {
+    limit: appConfig.rateLimit.streamPerMinute,
+    windowMs: 60_000,
+  })
+  if (!rate.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rate.retryAfterMs / 1000))
+    return res.status(429).json({ error: "Too many requests. Please slow down." })
+  }
 
   const form = formidable({ maxFileSize: 5 * 1024 * 1024 })
   const [fields, files] = await form.parse(req)
@@ -22,9 +34,6 @@ export default async function handler(req, res) {
     state = initialRiskState()
   }
 
-  // Language detected on an earlier chunk of this same live session, if
-  // any. The client echoes this back on each request (see index.html) so
-  // later chunks can reuse it instead of auto-detecting from scratch.
   const languageHint = fields.language?.[0] || null
 
   try {
