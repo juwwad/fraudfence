@@ -7,10 +7,19 @@ import { transcribe, splitIntoChunks } from "../lib/transcribe.js"
 import { judgeChunk } from "../lib/judge.js"
 import { scoreChunk, initialRiskState } from "../lib/risk.js"
 import { checkRateLimit, getClientKey } from "../lib/rateLimit.js"
-import { config as appConfig } from "../lib/config.js"
+import { config as appConfig, getMissingEnv } from "../lib/config.js"
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "POST only" })
+
+  // Checked inside the handler (not at import time) so a missing key
+  // produces a clean JSON error instead of a raw platform crash. The
+  // variable names go to the server log only, not to the client.
+  const missing = getMissingEnv()
+  if (missing.length > 0) {
+    console.error("Missing environment variables:", missing.join(", "))
+    return res.status(500).json({ error: "Server is not configured correctly. Please contact the site owner." })
+  }
 
   const clientKey = getClientKey(req)
   const rate = checkRateLimit(`analyze:${clientKey}`, {
