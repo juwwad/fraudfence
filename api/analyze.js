@@ -6,21 +6,16 @@ import fs from "node:fs/promises"
 import { transcribe, splitIntoChunks } from "../lib/transcribe.js"
 import { judgeChunk } from "../lib/judge.js"
 import { scoreChunk, initialRiskState } from "../lib/risk.js"
-import { checkRateLimit, getClientKey } from "../lib/rateLimit.js"
+import { guardRequest } from "../lib/guard.js"
 import { config as appConfig } from "../lib/config.js"
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "POST only" })
-
-  const clientKey = getClientKey(req)
-  const rate = checkRateLimit(`analyze:${clientKey}`, {
-    limit: appConfig.rateLimit.analyzePerMinute,
-    windowMs: 60_000,
+  const allowed = guardRequest(req, res, {
+    route: "analyze",
+    limitPerMinute: appConfig.rateLimit.analyzePerMinute,
+    tooManyMessage: "Too many requests. Please wait a moment and try again.",
   })
-  if (!rate.allowed) {
-    res.setHeader("Retry-After", Math.ceil(rate.retryAfterMs / 1000))
-    return res.status(429).json({ error: "Too many requests. Please wait a moment and try again." })
-  }
+  if (!allowed) return
 
   const form = formidable({ maxFileSize: 20 * 1024 * 1024 })
   const [, files] = await form.parse(req)
