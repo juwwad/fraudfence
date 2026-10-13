@@ -12,7 +12,7 @@
     #card.unknown { background: #374151 }
     #score { font-size: 8rem; font-weight: 800; line-height: 1 }
     #reason { font-size: 1.6rem; opacity: .9; min-height: 2.4rem }
-    #status { font-size: 1.1rem; color: #fca5a5; min-height: 1.5rem; margin-top: 1rem }
+    #status { display: block; font-size: 1.1rem; color: #fca5a5; min-height: 1.5rem; margin-top: 1rem }
     #warning { display: none; margin-top: 1.5rem; padding: 1.25rem;
                background: #dc2626; border-radius: 1rem; font-size: 1.8rem; font-weight: 700 }
     #controls { margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center; align-items: center }
@@ -23,7 +23,7 @@
   <div id="card">
     <div id="score">0</div>
     <div id="reason">Upload a recording, or start listening</div>
-    <div id="status" role="status"></div>
+    <output id="status"></output>
     <div id="warning">⚠️ Yeh OTP ka mutalba fraud hai. Call band kar dein.</div>
     <div id="controls">
       <button id="listen">🎙️ Start listening</button>
