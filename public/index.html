@@ -12,6 +12,7 @@
     #card.unknown { background: #374151 }
     #score { font-size: 8rem; font-weight: 800; line-height: 1 }
     #reason { font-size: 1.6rem; opacity: .9; min-height: 2.4rem }
+    #status { display: block; font-size: 1.1rem; color: #fca5a5; min-height: 1.5rem; margin-top: 1rem }
     #warning { display: none; margin-top: 1.5rem; padding: 1.25rem;
                background: #dc2626; border-radius: 1rem; font-size: 1.8rem; font-weight: 700 }
     #controls { margin-top: 1.5rem; display: flex; gap: 1rem; justify-content: center; align-items: center }
@@ -22,6 +23,7 @@
   <div id="card">
     <div id="score">0</div>
     <div id="reason">Upload a recording, or start listening</div>
+    <output id="status"></output>
     <div id="warning">⚠️ Yeh OTP ka mutalba fraud hai. Call band kar dein.</div>
     <div id="controls">
       <button id="listen">🎙️ Start listening</button>
@@ -33,9 +35,16 @@
     const card = document.getElementById("card")
     const scoreEl = document.getElementById("score")
     const reasonEl = document.getElementById("reason")
+    const statusEl = document.getElementById("status")
     const warningEl = document.getElementById("warning")
     const listenBtn = document.getElementById("listen")
     const URDU_WARNING = "Yeh OTP ka mutalba fraud hai. Bank kabhi OTP nahi maangta. Call band kar dein."
+
+    // Problems go in their own line instead of the card, so a failed chunk
+    // never overwrites the score/colour of a call that is already flagged.
+    function setStatus(message) {
+      statusEl.textContent = message
+    }
 
     function render(step) {
       scoreEl.textContent = step.score
@@ -58,6 +67,7 @@
       warningEl.style.display = "none"
       scoreEl.textContent = "0"
       card.className = ""
+      setStatus("")
     }
 
     // MODE A — recorded file (server computes the whole timeline in one call)
@@ -70,8 +80,14 @@
 
       const body = new FormData()
       body.append("audio", file)
-      const res = await fetch("/api/analyze", { method: "POST", body })
-      const data = await res.json()
+      let data
+      try {
+        const res = await fetch("/api/analyze", { method: "POST", body })
+        data = await res.json()
+      } catch {
+        reasonEl.textContent = "Couldn't reach the server. Please try again."
+        return
+      }
       if (data.error) { reasonEl.textContent = data.error; return }
 
       for (const step of data.timeline) {
@@ -88,12 +104,35 @@
     let riskState = null
     let detectedLanguage = null // learned from the first live chunk, reused for later ones
 
+    function liveRecordingUnsupportedReason() {
+      if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+        return "Live listening isn't supported in this browser."
+      }
+      if (!MediaRecorder.isTypeSupported("audio/webm")) {
+        return "This browser can't record in the format needed. Try a recent Chrome, Edge or Firefox."
+      }
+      return ""
+    }
+
+    function micErrorMessage(error) {
+      if (error?.name === "NotAllowedError") return "Microphone access was denied. Allow it in your browser settings and try again."
+      if (error?.name === "NotFoundError") return "No microphone was found."
+      return "The microphone couldn't be used."
+    }
+
     listenBtn.addEventListener("click", async () => {
       if (listening) return stopListening()
 
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
-      })
+      const unsupported = liveRecordingUnsupportedReason()
+      if (unsupported) return setStatus(unsupported)
+
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+        })
+      } catch (error) {
+        return setStatus(micErrorMessage(error))
+      }
 
       reset()
       riskState = null
@@ -102,26 +141,44 @@
       listenBtn.textContent = "⏹ Stop listening"
       reasonEl.textContent = "Listening..."
 
-      while (listening) {
-        const blob = await recordChunk(micStream, CHUNK_MS)
-        sendChunk(blob)
+      try {
+        while (listening) {
+          const blob = await recordChunk(micStream, CHUNK_MS)
+          if (!listening) break // stopped mid-chunk: drop the partial recording
+          sendChunk(blob) // not awaited on purpose; it handles its own errors
+        }
+      } catch (error) {
+        stopListening()
+        reasonEl.textContent = "Listening stopped"
+        setStatus(`Recording stopped: ${micErrorMessage(error)}`)
       }
     })
 
     function stopListening() {
       listening = false
       micStream?.getTracks().forEach((track) => track.stop())
+      micStream = null
       listenBtn.textContent = "🎙️ Start listening"
     }
 
     function recordChunk(stream, ms) {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         const parts = []
+        let timer
         const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" })
         recorder.ondataavailable = (event) => parts.push(event.data)
-        recorder.onstop = () => resolve(new Blob(parts, { type: "audio/webm" }))
+        recorder.onerror = (event) => {
+          clearTimeout(timer)
+          reject(event.error ?? new Error("Recording failed"))
+        }
+        recorder.onstop = () => {
+          clearTimeout(timer)
+          resolve(new Blob(parts, { type: "audio/webm" }))
+        }
         recorder.start()
-        setTimeout(() => recorder.stop(), ms)
+        timer = setTimeout(() => {
+          if (recorder.state !== "inactive") recorder.stop()
+        }, ms)
       })
     }
 
@@ -131,13 +188,21 @@
       if (riskState) body.append("state", JSON.stringify(riskState))
       if (detectedLanguage) body.append("language", detectedLanguage)
 
-      const res = await fetch("/api/stream", { method: "POST", body })
-      const step = await res.json()
-      if (step.error) return
-      riskState = step.state
-      if (step.language) detectedLanguage = step.language
-      if (step.skipped) return
-      render(step)
+      try {
+        const res = await fetch("/api/stream", { method: "POST", body })
+        const step = await res.json()
+        if (step.error) {
+          setStatus(`${step.error} (a chunk was skipped)`)
+          return
+        }
+        setStatus("")
+        riskState = step.state
+        if (step.language) detectedLanguage = step.language
+        if (step.skipped) return
+        render(step)
+      } catch {
+        setStatus("Couldn't reach the server — a chunk was skipped.")
+      }
     }
   </script>
 </body>
