@@ -7,6 +7,9 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
 - Analyze a recorded audio file as a timeline of risk updates.
 - Listen to a microphone in 10-second chunks.
 - Detect signals such as OTP/PIN requests, fake bank verification, prize scams, family emergencies, job scams, and government-payment scams.
+- Back up the model with a keyword safety net that flags clear OTP, PIN,
+  password or card-number requests and urgent payment demands, even if the
+  model is talked into a low score.
 - Show green, amber, and red risk states.
 - Speak an Urdu warning after two consecutive high-risk chunks.
 
@@ -22,24 +25,24 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
 
 1. Install dependencies:
 
-   ```bash
+```bash
    npm install
-   ```
+```
 
 2. Create a `.env` file in the project root. You can copy the provided
    [`.env.example`](./.env.example) file:
 
-   ```env
+```env
    GROQ_API_KEY=your_groq_api_key
    OPENROUTER_API_KEY=your_openrouter_api_key
-   ```
+```
 
    Optional model overrides:
 
-   ```env
+```env
    TRANSCRIBE_MODEL=whisper-large-v3-turbo
    JUDGE_MODEL=qwen/qwen3-30b-a3b
-   ```
+```
 
    `TRANSCRIBE_MODEL` and `JUDGE_MODEL` are optional. If omitted, the
    application uses the defaults shown above. Keep API keys server-side; do
@@ -47,9 +50,9 @@ Fraud Fence is a lightweight browser app for detecting common phone scams in Urd
 
 3. Start the local Vercel development server:
 
-   ```bash
+```bash
    npm run dev
-   ```
+```
 
 4. Open the URL printed by Vercel, usually `http://localhost:3000`.
 
@@ -106,35 +109,54 @@ The response includes the current transcript, risk output, and updated state. Em
 
 ## Risk scoring
 
-- A model risk of 60 or higher is considered high risk.
-- High-risk chunks increase the running score by half their model risk.
+- A chunk risk of 60 or higher is considered high risk.
+- High-risk chunks increase the running score by half their risk.
 - Lower-risk chunks reduce the running score by 10 points.
 - The displayed level is green below 30, amber from 30 through 59, and red at 60 or above.
 - The warning is triggered after two consecutive high-risk chunks.
 - A failed analysis produces an `unknown` level, preserves the score and strike
   count, and never lowers the risk.
 
+## Keyword safety net
+
+The model reads whatever the caller says, so a caller could try to talk it
+into scoring a scam as safe. `lib/heuristics.js` is a second signal that is
+plain pattern matching, so nothing a caller says can argue with it. It only
+raises a score; it never lowers one.
+
+- It flags a clear request for an OTP, PIN, password, CVV or card number
+  (risk 80), and money demanded together with urgency (risk 65). Both are
+  above the 60 high-risk line.
+- It covers English, Roman Urdu and Urdu script, and ignores spacing tricks
+  such as "O T P" and invisible characters.
+- It stays quiet on safety advice such as "never share your OTP" and on
+  ordinary calls, because false alarms would teach people to ignore the app.
+- If the model call fails but the safety net matches, the chunk is scored
+  from the match instead of being shown as `unknown`.
+- It is deliberately narrow. Anything subtler is left to the model, and the
+  word lists at the top of the file are meant to be extended over time.
+
 ## Deployment
 
 1. Install the Vercel CLI if needed:
 
-   ```bash
+```bash
    npm install -g vercel
-   ```
+```
 
 2. Link or deploy the project:
 
-   ```bash
+```bash
    vercel
-   ```
+```
 
 3. Add `GROQ_API_KEY` and `OPENROUTER_API_KEY` to the Vercel project environment variables. Add model overrides only if you want values different from the defaults.
 
 4. Deploy to production:
 
-   ```bash
+```bash
    vercel --prod
-   ```
+```
 
 The Vercel function configuration gives `/api/analyze` up to 60 seconds and `/api/stream` up to 30 seconds.
 
@@ -146,9 +168,12 @@ api/
   stream.js        Live audio chunk endpoint
 lib/
   config.js        Environment and model configuration
+  guard.js         Shared request checks: POST-only, env vars, rate limit
+  heuristics.js    Keyword safety net that backs up the model
   judge.js         Scam classification through OpenRouter
+  rateLimit.js     Per-client rate limiter
   risk.js          Running risk score and warning logic
-  transcribe.js    Urdu transcription through Groq
+  transcribe.js    Speech transcription through Groq
 public/
   index.html       Browser UI and microphone/file client
 vercel.json        Vercel function limits
@@ -162,7 +187,7 @@ Run the static syntax check with:
 npm run build
 ```
 
-Run the unit tests for the risk-scoring logic with:
+Run the unit tests with:
 
 ```bash
 npm test
